@@ -127,28 +127,73 @@ export function createPlateWalk({document:root,locale,onMode=()=>{}}){
   const hint=root.getElementById('scene-hint');hint.dataset.i18n=active?'plateHint':'worldHint';write(hint,locale.t(hint.dataset.i18n));
   if(view){view.group.visible=active;view.world.visible=!active;view.endLabel(locale.t('endpoint'));}
  }
+ const interactive='input,textarea,select,button,a,[contenteditable]';
+ function protectedFocus(){
+  const node=root.activeElement?.closest?.(interactive);
+  return Boolean(node && !(node.dataset?.plateMove || node.dataset?.move));
+ }
  function stop(){held.clear();}
- function command(direction){if(!active)return;beginWalkMove(state,direction,{reducedMotion:reduced});sync();}
+ function heldDirection(){
+  const directions=new Set([...held.values()].map(input=>input.direction));
+  const forward=Number(directions.has('forward'))-Number(directions.has('backward'));
+  const side=Number(directions.has('right'))-Number(directions.has('left'));
+  return (forward!==0)!==(side!==0)?forward?forward>0?'forward':'backward':side>0?'right':'left':null;
+ }
+ function press(id,direction){
+  if(!active || root.hidden || protectedFocus() || held.has(id) || !Object.hasOwn(vectors,direction))return;
+  // Busy presses participate in cancellation, but never become deferred moves.
+  const eligible=state.phase==='ready';
+  held.set(id,{direction,eligible,tapPending:eligible});
+  const selected=heldDirection();
+  held.forEach(input=>{if(input.direction!==selected)input.tapPending=false;});
+ }
+ function command(direction){
+  if(!active || root.hidden || protectedFocus())return;
+  // A frame or release consumes every pending tap in the current input chord.
+  if(state.phase==='ready')held.forEach(input=>{input.tapPending=false;});
+  const result=beginWalkMove(state,direction,{reducedMotion:reduced});sync();return result;
+ }
+ function release(id,cancelled=false){
+  const input=held.get(id);
+  if(!input)return;
+  // Down/up can both occur between frames. Commit that tap before deleting it.
+  // A held move already consumed it, and cancellation never commits a tap.
+  if(!cancelled && input.eligible && input.tapPending && state.phase==='ready' && heldDirection()===input.direction)command(input.direction);
+  held.delete(id);
+ }
  const keyMap={w:'forward',arrowup:'forward',s:'backward',arrowdown:'backward',a:'left',arrowleft:'left',d:'right',arrowright:'right'};
  window.addEventListener('keydown',event=>{
-  if(!active || event.target?.closest?.('input,textarea,select,button,a'))return;
+  if(!active || event.target?.closest?.(interactive))return;
   const key=event.key.toLowerCase();
   if(!Object.hasOwn(keyMap,key))return;
-  event.preventDefault();held.set('key:'+key,keyMap[key]);
+  event.preventDefault();
+  if(!event.repeat)press('key:'+key,keyMap[key]);
  });
- window.addEventListener('keyup',event=>held.delete('key:'+event.key.toLowerCase()));
+ window.addEventListener('keyup',event=>release('key:'+event.key.toLowerCase(),Boolean(event.target?.closest?.(interactive))));
  window.addEventListener('blur',stop);
  root.addEventListener('visibilitychange',()=>{if(root.hidden)stop();});
+ root.addEventListener('focusin',()=>{if(protectedFocus())stop();});
  root.querySelectorAll('[data-move],[data-plate-move]').forEach(button=>{
   const direction=button.dataset.plateMove??button.dataset.move;
+  let pointerClick=false;
   button.addEventListener('pointerdown',event=>{
-   if(!active)return;
+   // Retain this marker until the compatibility click, even after cancellation.
+   pointerClick=true;
+   if(!active || root.hidden || (event.button!==undefined && event.button!==0))return;
    event.preventDefault();
-   button.setPointerCapture(event.pointerId);
-   held.set('pointer:'+event.pointerId,direction);
+   button.focus?.({preventScroll:true});
+   press('pointer:'+event.pointerId,direction);
+   try{button.setPointerCapture(event.pointerId);}catch{}
   });
-  for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,event=>held.delete('pointer:'+event.pointerId));
-  button.addEventListener('click',event=>{if(event.detail===0)command(direction);});
+  button.addEventListener('pointerup',event=>release('pointer:'+event.pointerId));
+  for(const name of ['pointercancel','lostpointercapture'])button.addEventListener(name,event=>release('pointer:'+event.pointerId,true));
+  button.addEventListener('keydown',event=>{
+   if(event.key==='Enter' || event.key===' ' || event.key==='Spacebar')pointerClick=false;
+  });
+  button.addEventListener('click',event=>{
+   if(pointerClick){pointerClick=false;return;}
+   if(event.detail===0 && !event.pointerType)command(direction);
+  });
  });
  root.getElementById('plate-mode').addEventListener('click',()=>api.setActive(true));
  root.getElementById('world-mode').addEventListener('click',()=>api.setActive(false));
@@ -164,13 +209,14 @@ export function createPlateWalk({document:root,locale,onMode=()=>{}}){
  function advance(now){
   requestAnimationFrame(advance);
   const dt=Math.max(0,Math.min(0.05,(now-last)/1000));last=now;
-  if(!active || root.hidden)return;
+  if(!active || root.hidden){stop();return;}
+  // Editing or focusing reset cancels input, not the opening or a committed step.
+  // Keep animation advancing while focus remains on an interactive control.
+  if(protectedFocus())stop();
   if(state.phase==='ready' && held.size){
    // Opposing simultaneous controls cancel; no random diagonal choice.
-   const directions=new Set(held.values());
-   const forward=Number(directions.has('forward'))-Number(directions.has('backward'));
-   const side=Number(directions.has('right'))-Number(directions.has('left'));
-   if((forward!==0)!==(side!==0))command(forward?forward>0?'forward':'backward':side>0?'right':'left');
+   const direction=heldDirection();
+   if(direction && [...held.values()].some(input=>input.eligible && input.direction===direction))command(direction);
   }
   tickWalk(state,dt,{reducedMotion:reduced});sync();
  }
