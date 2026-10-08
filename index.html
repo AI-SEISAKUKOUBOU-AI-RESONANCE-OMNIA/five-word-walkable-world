@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang='ja'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <meta name='theme-color' content='#29334d'>
+  <title>五語で一区画</title>
+  <link rel='stylesheet' href='./style.css'>
+</head>
+<body>
+  <main class='app'>
+    <header class='heading'>
+      <div><p class='eyebrow'>澄んだ夕暮れを、静かに歩く</p><h1>五語で一区画</h1></div>
+      <p class='intro'>五つの言葉で8区画の散歩道を組み、草木や灯り、水辺を眺めながら歩こう。気になる景色のそばへ近づき、静かに見回せます。</p>
+    </header>
+    <section class='workspace' aria-label='夕暮れの散歩道をつくって歩く'>
+      <div class='stage'>
+        <canvas id='scene' data-testid='scene' aria-label='草木と灯り、水辺の景色を歩いて見回せる立体の散歩道。ドラッグまたはスワイプで視点を動かせます'></canvas>
+        <div class='scene-label' aria-hidden='true'><span class='spark'></span> 澄んだ夕暮れの8区画</div>
+        <div id='progress' class='scene-progress' role='status' aria-live='polite'>現在地：中央の道 · 発見 0 / 8</div>
+        <div class='scene-hint'>W A S D／矢印で歩く · ドラッグで見回す</div>
+        <div id='fallback' data-testid='fallback' class='fallback' hidden><strong>立体表示を利用できません</strong><p>下の地図と名所の説明で、作った世界を読めます。別のブラウザや端末では立体探索もできます。</p></div>
+        <div class='touch-controls' aria-label='画面内の移動操作'>
+          <button type='button' data-move='forward' aria-label='前へ歩く'>▲</button>
+          <div><button type='button' data-move='left' aria-label='左へ歩く'>◀</button><button type='button' data-move='backward' aria-label='後ろへ歩く'>▼</button><button type='button' data-move='right' aria-label='右へ歩く'>▶</button></div>
+        </div>
+      </div>
+      <aside class='panel'>
+        <form id='world-form' novalidate>
+          <h2>散歩道をつくる五つの手がかり</h2>
+          <p class='assist'>一語20文字まで。対応する日本語は形や配置の手がかりに、その他の言葉は区画の名前になります。</p>
+          <div class='word-grid'>
+            <label>一語目<input name='word' maxlength='20' value='灯' autocomplete='off' required></label>
+            <label>二語目<input name='word' maxlength='20' value='森' autocomplete='off' required></label>
+            <label>三語目<input name='word' maxlength='20' value='水' autocomplete='off' required></label>
+            <label>四語目<input name='word' maxlength='20' value='樹' autocomplete='off' required></label>
+            <label>五語目<input name='word' maxlength='20' value='橋' autocomplete='off' required></label>
+          </div>
+          <label class='ban-label'>入れたくない要素<input id='ban' name='ban' maxlength='20' value='岩' autocomplete='off' required></label>
+          <p class='assist'>除外できる要素：橋・塔・樹（森／木）・岩（山）・灯（光）・水（川／湖）。この一覧以外には対応していません。</p>
+          <button type='submit' class='primary' data-testid='primary'>夕暮れの道をつくる <span aria-hidden='true'>↗</span></button>
+        </form>
+        <div class='actions'>
+          <button id='reset' type='button' data-testid='reset'>出発地点へ戻る</button>
+          <button id='overview' type='button'>全景を見る</button>
+          <button id='stop' type='button'>止まる</button>
+          <button id='bgm-toggle' type='button' data-testid='bgm-toggle' aria-pressed='false'>BGM: OFF</button>
+        </div>
+        <audio id='bgm' src='./bgm.mp3' loop preload='auto'></audio>
+        <p id='state' data-testid='state' class='state' role='status' aria-live='polite'></p>
+        <section class='landmark' aria-labelledby='landmark-heading'><p class='eyebrow'>散歩道の名所 · 定型文による創作</p><h2 id='landmark-heading'></h2><p id='landmark-text'></p></section>
+        <section class='map' aria-labelledby='map-heading'><h2 id='map-heading'>8区画の散歩地図</h2><p class='assist'>番号は左上から順番。中央の道から各区画へ入り、気になる景色のそばまで歩けます。</p><ol id='map-list'></ol></section>
+      </aside>
+    </section>
+  </main>
+  <script type='module' src='./app.mjs'></script>
+</body>
+</html>
