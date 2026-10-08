@@ -1,3 +1,6 @@
+import {createLocale, districtName, landmarkCopy} from './locale.mjs';
+import {createPlateWalk} from './plate-walk.mjs';
+
 export const TYPES = Object.freeze(['bridge','tower','tree','rock','lamp','water']);
 const TYPE_NAMES = Object.freeze({bridge:'橋',tower:'塔',tree:'樹',rock:'岩',lamp:'灯',water:'水'});
 const ALIASES = Object.freeze({bridge:['橋'],tower:['塔'],tree:['樹','森','木'],rock:['岩','山'],lamp:['灯','光'],water:['水','川','湖']});
@@ -69,6 +72,7 @@ export function movementDelta(forward,side,yaw,distance) {
 }
 
 function boot() {
+  const locale = createLocale(document);
   const canvas = document.getElementById('scene');
   const fallback = document.getElementById('fallback');
   const form = document.getElementById('world-form');
@@ -86,38 +90,60 @@ function boot() {
   let resetView = () => {};
   let stopMoving = () => {};
   let resetVisitProgress = () => {};
-  function showModel(model,message) {
-    current = model;
-    state.textContent = message;
-    landmarkHeading.textContent = model.landmark.title;
-    landmarkText.textContent = model.landmark.text;
+  let refreshProgress = () => {};
+  let overview = false;
+  let stateKey = 'worldSample';
+  let stateError = null;
+  const plate = createPlateWalk({document,locale,onMode:() => stopMoving()});
+  function setState(key) {
+    stateKey=key;stateError=null;state.textContent=locale.t(key);
+  }
+  function drawModel() {
+    const copy=landmarkCopy(current,locale.language);
+    landmarkHeading.textContent=copy.title;
+    landmarkText.textContent=copy.text;
     mapList.replaceChildren();
-    model.tiles.forEach(tile => {
+    current.tiles.forEach(tile => {
       const item = document.createElement('li');
-      if (tile.index === model.landmark.tile) item.className = 'landmark-cell';
+      if (tile.index === current.landmark.tile) item.className = 'landmark-cell';
       const number = document.createElement('span');
       number.className = 'number';
       number.textContent = String(tile.index + 1).padStart(2,'0');
-      item.append(number,document.createTextNode(tile.name));
+      item.append(number,document.createTextNode(districtName(tile,locale.language)));
       mapList.append(item);
     });
   }
-  showModel(current,'見本の世界が広がっています。五語を入力して、世界をつくってください。');
+  function showModel(model,message) {
+    current=model;setState(message);drawModel();
+  }
+  showModel(current,'worldSample');
+  locale.subscribe(() => {
+    drawModel();
+    state.textContent=stateError?locale.validation(stateError):locale.t(stateKey);
+    overviewButton.textContent=locale.t(overview?'walkView':'overview');
+    refreshProgress(true);
+  });
   form.addEventListener('submit', event => {
     event.preventDefault();
     const words = [...form.querySelectorAll('input[name=word]')].map(input => input.value);
     const ban = document.getElementById('ban').value;
     const checked = validateInput(words,ban);
-    if (!checked.ok) { state.textContent = checked.error; return; }
+    if (!checked.ok) { stateError=checked.error;state.textContent=locale.validation(checked.error);return; }
     const model = buildWorld(words,ban);
+    plate.setActive(false);
     updateScene(model);
     resetView();
-    showModel(model,'8区画を組み直しました。小径を歩き、近くの草花や名所を見回してみてください。');
+    showModel(model,'worldBuilt');
     resetVisitProgress();
   });
-  document.getElementById('reset').addEventListener('click',() => { resetView(); state.textContent = '出発地点に戻りました。中央の道から8区画を歩けます。'; });
-  overviewButton.addEventListener('click',() => setOverview());
-  document.getElementById('stop').addEventListener('click',() => { stopMoving(); state.textContent = '足を止めました。景色を見回せます。'; });
+  document.getElementById('reset').addEventListener('click',() => {
+    if(plate.active){plate.reset();return;}
+    resetView();setState('worldReset');
+  });
+  overviewButton.addEventListener('click',() => {if(!plate.active)setOverview();});
+  document.getElementById('stop').addEventListener('click',() => {
+    stopMoving();plate.stop();if(!plate.active)setState('worldStopped');
+  });
   bgm.volume = 0.18;
   bgm.pause();
   bgmToggle.addEventListener('click',async () => {
@@ -135,12 +161,17 @@ function boot() {
     } catch {
       bgmToggle.textContent = 'BGM: OFF';
       bgmToggle.setAttribute('aria-pressed','false');
-      state.textContent = 'BGMを再生できませんでした。世界の探索は続けられます。';
+      setState('bgmError');
     }
   });
+  plate.setActive(true);
+  function renderingUnavailable() {
+    fallback.hidden=false;canvas.hidden=true;plate.setFallback(true);
+  }
+  canvas.addEventListener('webglcontextlost',event => {event.preventDefault();renderingUnavailable();});
   let gl;
   try { gl = canvas.getContext('webgl2',{antialias:true}); } catch { gl = null; }
-  if (!gl) { fallback.hidden = false; return; }
+  if (!gl) { renderingUnavailable();return; }
   import('./vendor/three.module.min.js').then(THREE => {
     try {
       const renderer = new THREE.WebGLRenderer({canvas,context:gl,antialias:true,powerPreference:'high-performance'});
@@ -432,6 +463,7 @@ function boot() {
       }
       install(current,false);
       updateScene = model => install(model,true);
+      plate.mountRenderer(THREE,{scene,camera,world,lowPower});
       const player = {x:SPAWN.x,z:SPAWN.z,yaw:SPAWN.yaw,pitch:SPAWN.pitch};
       const keys = new Set();
       const touchMoves = new Set();
@@ -446,8 +478,8 @@ function boot() {
         const near=Math.hypot(player.x-focus.objectX,player.z-focus.objectZ)<6;
         if (!force && district===lastDistrict && near===lastNear) return;
         lastDistrict=district;lastNear=near;
-        const place=tile?`区画${String(district+1).padStart(2,'0')} ${tile.name}`:'中央の道';
-        progress.textContent=`現在地：${place} · 発見 ${visited.size} / 8${near?' · 名所の近く':''}`;
+        const place=tile?locale.t('districtPlace',{number:String(district+1).padStart(2,'0'),name:districtName(tile,locale.language)}):locale.t('centralPath');
+        progress.textContent=locale.t('worldProgress',{place,n:visited.size,near:near?locale.t('nearLandmark'):''});
         [...mapList.children].forEach((item,index)=>{
           item.classList.toggle('visited',visited.has(index));
           item.classList.toggle('current',index===district);
@@ -455,47 +487,50 @@ function boot() {
           else item.removeAttribute('aria-current');
         });
       }
+      refreshProgress=updateProgress;
       resetVisitProgress=()=>{visited.clear();lastDistrict=-2;lastNear=false;updateProgress(true);};
-      let overview = false;
       resetView = () => {
         Object.assign(player,SPAWN);
         keys.clear();touchMoves.clear();
         overview=false;
-        overviewButton.textContent='全景を見る';
+        overviewButton.textContent=locale.t('overview');
         updateProgress(true);
       };
       stopMoving = () => { keys.clear();touchMoves.clear(); };
       setOverview = () => {
         overview=!overview;
         stopMoving();
-        overviewButton.textContent=overview?'歩く視点へ':'全景を見る';
-        state.textContent=overview?'全景から8区画を見渡しています。':'歩く視点に戻りました。';
+        overviewButton.textContent=locale.t(overview?'walkView':'overview');
+        setState(overview?'worldOverview':'worldWalking');
       };
       const movementKeys = new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright']);
       window.addEventListener('keydown',event => {
-        if (event.target instanceof HTMLElement && event.target.closest('input,textarea,select')) return;
+        if(plate.active)return;
+        if (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,button,a')) return;
         const key=event.key.toLowerCase();
-        if (movementKeys.has(key)) { event.preventDefault();keys.add(key);if (overview) setOverview(); }
+        if (movementKeys.has(key)) { event.preventDefault();if (overview) setOverview();keys.add(key); }
       });
       window.addEventListener('keyup',event => keys.delete(event.key.toLowerCase()));
       window.addEventListener('blur',stopMoving);
+      document.addEventListener('visibilitychange',() => {if(document.hidden)stopMoving();});
       document.querySelectorAll('[data-move]').forEach(button => {
         const direction=button.dataset.move;
         button.addEventListener('pointerdown',event => {
-          event.preventDefault();button.setPointerCapture(event.pointerId);touchMoves.add(direction);
-          if (overview) setOverview();
+          if(plate.active)return;
+          event.preventDefault();if (overview) setOverview();button.setPointerCapture(event.pointerId);touchMoves.add(direction);
         });
         for (const name of ['pointerup','pointercancel','lostpointercapture']) button.addEventListener(name,() => touchMoves.delete(direction));
       });
       let dragId=null,lastX=0,lastY=0;
       canvas.addEventListener('pointerdown',event => {
+        if(plate.active)return;
         if (event.pointerType==='mouse' && event.button!==0) return;
         dragId=event.pointerId;lastX=event.clientX;lastY=event.clientY;
         canvas.setPointerCapture(event.pointerId);
         if (overview) setOverview();
       });
       canvas.addEventListener('pointermove',event => {
-        if (event.pointerId!==dragId) return;
+        if(plate.active || event.pointerId!==dragId)return;
         player.yaw+=(event.clientX-lastX)*0.0045;
         player.pitch=Math.max(-0.66,Math.min(0.54,player.pitch+(event.clientY-lastY)*0.0037));
         lastX=event.clientX;lastY=event.clientY;
@@ -514,20 +549,26 @@ function boot() {
       let previousTime=performance.now();
       function frame(now) {
         requestAnimationFrame(frame);
+        if(canvas.hidden)return;
         const dt=Math.min(0.05,(now-previousTime)/1000);
         previousTime=now;
-        if (!overview) {
-          const forward=Number(keys.has('w')||keys.has('arrowup')||touchMoves.has('forward'))-Number(keys.has('s')||keys.has('arrowdown')||touchMoves.has('backward'));
-          const side=Number(keys.has('d')||keys.has('arrowright')||touchMoves.has('right'))-Number(keys.has('a')||keys.has('arrowleft')||touchMoves.has('left'));
-          const {dx,dz}=movementDelta(forward,side,player.yaw,4.5*dt);
-          if (canStand(player.x+dx,player.z,current.tiles)) player.x+=dx;
-          if (canStand(player.x,player.z+dz,current.tiles)) player.z+=dz;
-          updateProgress();
-          camera.position.set(player.x,1.82,player.z);
-          camera.rotation.set(player.pitch,player.yaw,0,'YXZ');
+        if(plate.active){
+          plate.render(dt);
         } else {
-          camera.position.set(0,43,44);
-          camera.lookAt(0,0,0);
+          if(camera.fov!==69){camera.fov=69;camera.far=210;camera.updateProjectionMatrix();}
+          if (!overview) {
+            const forward=Number(keys.has('w')||keys.has('arrowup')||touchMoves.has('forward'))-Number(keys.has('s')||keys.has('arrowdown')||touchMoves.has('backward'));
+            const side=Number(keys.has('d')||keys.has('arrowright')||touchMoves.has('right'))-Number(keys.has('a')||keys.has('arrowleft')||touchMoves.has('left'));
+            const {dx,dz}=movementDelta(forward,side,player.yaw,4.5*dt);
+            if (canStand(player.x+dx,player.z,current.tiles)) player.x+=dx;
+            if (canStand(player.x,player.z+dz,current.tiles)) player.z+=dz;
+            updateProgress();
+            camera.position.set(player.x,1.82,player.z);
+            camera.rotation.set(player.pitch,player.yaw,0,'YXZ');
+          } else {
+            camera.position.set(0,43,44);
+            camera.lookAt(0,0,0);
+          }
         }
         for (let i=transitions.length-1;i>=0;i--) {
           const part=transitions[i];
@@ -551,9 +592,8 @@ function boot() {
       requestAnimationFrame(frame);
       updateProgress(true);
     } catch {
-      fallback.hidden=false;
-      canvas.hidden=true;
+      renderingUnavailable();
     }
-  }).catch(() => { fallback.hidden=false;canvas.hidden=true; });
+  }).catch(renderingUnavailable);
 }
 if (typeof document !== 'undefined') boot();
